@@ -10,6 +10,7 @@ import websocket
 import shutil
 from urllib.parse import quote, unquote
 from concurrent.futures import ThreadPoolExecutor
+import ipaddress
 
 # ------------------ Настройки ------------------
 BASE_DIR = "checked"
@@ -56,6 +57,18 @@ URLS_MY = [
 EURO_CODES = {"NL", "DE", "FI", "GB", "FR", "SE", "PL", "CZ", "AT", "CH", "IT", "ES", "NO", "DK", "BE", "IE", "LU", "EE", "LV", "LT"}
 BAD_MARKERS = ["CN", "IR", "KR", "BR", "IN", "RELAY", "POOL", "🇨🇳", "🇮🇷", "🇰🇷"] 
 
+# Приватные и зарезервированные IP диапазоны (для валидации)
+RESERVED_CIDRS = [
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "100.64.0.0/10",  # CGNAT
+    "169.254.0.0/16",
+    "127.0.0.0/8",
+    "224.0.0.0/4",
+    "240.0.0.0/4"
+]
+
 # ------------------ Функции ------------------
 
 def load_json(path):
@@ -97,6 +110,34 @@ def fetch_keys(urls, tag):
     out = []
     print(f"Загрузка {tag}...")
     for url in urls:
+
+        def resolve_host_to_ip(host):
+    """Резолвит хост в IP адрес"""
+    try:
+        return socket.gethostbyname(host)
+    except:
+        return None
+
+def is_valid_public_ip(ip_str):
+    """Проверяет, что IP публичный (не в приватных/зарезервированных диапазонах)"""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        for cidr_str in RESERVED_CIDRS:
+            if ip in ipaddress.ip_network(cidr_str):
+                return False
+        return True
+    except:
+        return False
+
+def is_behind_cgnat(ip_str):
+    """Детектит CGNAT - серверы за ним недоступны напрямую"""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        cgnat = ipaddress.ip_network("100.64.0.0/10")
+        return ip in cgnat
+    except:
+        return False
+
         try:
             if "github.com" in url and "/blob/" in url:
                 url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
@@ -130,12 +171,12 @@ def check_single_key(data):
             part = key.split("@")[1].split("?")[0].split("#")[0]
             host, port = part.split(":")[0], int(part.split(":")[1])
         else: 
-            return None, None, None
+            return NonNone, None, None, None
 
         country = get_country_fast(host, key)
         
         if tag == "MY" and country == "RU": 
-            return None, None, None
+            return None, None, No, None
 
         is_tls = 'security=tls' in key or 'security=reality' in key or 'trojan://' in key or 'vmess://' in key
         is_ws = 'type=ws' in key or 'net=ws' in key
@@ -165,9 +206,9 @@ def check_single_key(data):
             with socket.create_connection((host, port), timeout=TIMEOUT): pass
             
         latency = int((time.time() - start) * 1000)
-        return latency, tag, country
+        return latency, tag, country, host
     except: 
-        return None, None, None
+        return None, None, None, None
 
 def make_final_key(k_id, latency, country):
     """Создает ключ с правильно закодированной меткой для Hiddify"""
@@ -335,6 +376,7 @@ if __name__ == "__main__":
     print("=== SUCCESS: LISTS GENERATED ===")
     print(f"RU файлы: {ru_files}")
     print(f"EURO файлы: {euro_files}")
+
 
 
 
